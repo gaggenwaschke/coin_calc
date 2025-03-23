@@ -1,0 +1,12 @@
+[project]
+name = "coin-calc"
+version = "0.1.0"
+description = "Calculates all possible words to put together from you funny little letter coins."
+authors = ["gaggenwaschke"]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "nltk>=3.9.1",
+    "pandas>=2.2.3",
+    "pydantic-settings>=2.8.1",
+]
