@@ -1,5 +1,4 @@
 import re
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterator, Tuple
 
@@ -9,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Config(BaseSettings):
-    value: int = Field(default=500, description="Value to create from given coins.")
+    value: int = Field(default=0, description="Value to create from given coins.")
     minimum_number_letters: int = Field(
         default=3, description="Minimum numbers of letter a word needs to have."
     )
@@ -23,9 +22,7 @@ WALLET_PATH = DATA_PATH / "coins.txt"
 COIN_VALUE_REGEX = re.compile(r"([a-zA-Z])\s(.*)\s([0-9]+)")
 WALLET_LINE_REGEX = re.compile(r"([0-9]+)x([a-zA-Z ]+)([a-zA-Z])\s+\(([0-9]+)\)")
 LANGUAGE_FILES_BASE_PATH = Path("/usr/share/dict/")
-LANGUAGES = [
-    "ngerman"
-]  # ["american-english", "british-english", "ngerman", "ogerman", "swiss"]
+LANGUAGES = ["american-english", "british-english", "ngerman", "ogerman", "swiss"]
 
 
 def main():
@@ -44,69 +41,98 @@ def main():
     letters_in_wallet += coins["letter"].value_counts()
     letters_in_wallet[letters_in_wallet.isna()] = 0
     letters_in_wallet = letters_in_wallet.astype(UInt64Dtype())
-    valid_words = DataFrame(
-        _get_all_valid_words(config, coin_values, letters_in_wallet, letter_index),
-        columns=["word", "language", "value"],
+    valid_words = _get_all_valid_words(
+        config, coin_values["value"], letters_in_wallet, letter_index
     )
     valid_words.sort_values("value", ascending=True, inplace=True)
     print(valid_words)
-    valid_words.to_csv(DATA_PATH / "output.csv")
+    valid_words[["language", "value"]].to_csv(DATA_PATH / "output.csv")
 
 
 def _get_all_valid_words(
     config: Config,
-    coin_values: DataFrame,
+    coin_values: Series,
     letters_in_wallet: Series,
     letter_index: Index,
 ) -> Iterator[Dict]:
-    output_interval = timedelta(seconds=3)
-    next_message = datetime.now() + output_interval
-    word_count = sum(1 for _ in _get_all_words())
-    base_series = Series(0, index=letter_index, dtype=UInt64Dtype())
-    for index, language_and_word in enumerate(_get_all_words()):
-        language, word = language_and_word
+    all_words = DataFrame.from_records(_get_all_words(), columns=["language", "word"])
+    all_words.drop_duplicates("word", inplace=True)
 
-        now = datetime.now()
-        if now > next_message:
-            print("Analyzing {:.1f}%".format(100.0 * index / word_count))
-            next_message = now + output_interval
+    all_words = _extract_all_letters(all_words, letter_index)
+    all_words.set_index("word", inplace=True)
 
-        if len(word) < config.minimum_number_letters:
-            continue
-        word_letter_series = base_series.copy()
-        for letter in _get_all_letters(word):
-            word_letter_series.loc[letter] += 1
+    counts_dont_add_up = all_words.index.str.len() != all_words.drop(
+        columns="language"
+    ).sum(axis=1)
+    if counts_dont_add_up.any():
+        missmatched_words = all_words[counts_dont_add_up].index
+        raise RuntimeError(
+            f"Not all counts add up, you may need to handle more special characters!: {missmatched_words}"
+        )
 
-        # Skip the words we can not put together from wallet
-        if (word_letter_series > letters_in_wallet).any():
-            continue
+    # filter for number of letters
+    all_words = all_words[all_words.index.str.len() >= config.minimum_number_letters]
+    # filter for letters we need
+    all_words = all_words[
+        all_words.drop(columns=["language", "diff"]).le(letters_in_wallet).all(axis=1)
+    ]
+    # compute values
+    all_words["value"] = (
+        all_words.drop(columns="language").mul(coin_values, axis=1).sum(axis=1)
+    )
+    all_words = all_words[all_words["value"] >= config.value]
+    all_words.sort_values("value", ascending=True, inplace=True)
+    return all_words
 
-        value = (coin_values.value * word_letter_series).sum()
-        if value < config.value:
-            continue
 
-        yield dict(word=word, language=language, value=value)
+def _extract_all_letters(all_words: DataFrame, letter_index: Index) -> DataFrame:
+    all_words["diff"] = Series(all_words["word"].str.count("[']"))
 
+    for letter in letter_index:
+        regex = f"[{letter.lower()}{letter.upper()}]"
+        all_words[letter] = Series(all_words["word"].str.count(regex))
 
-def _get_all_letters(word: str) -> Iterator[str]:
-    for letter in word:
-        if letter == "Ä":
-            yield "A"
-            yield "E"
-        elif letter == "Ö":
-            yield "O"
-            yield "E"
-        elif letter == "Ü":
-            yield "U"
-            yield "E"
-        elif letter == "É" or letter == "Ê":
-            yield "E"
-        elif letter == "Â":
-            yield "A"
-        elif letter == "'":
-            continue
-        else:
-            yield letter
+    count = Series(all_words["word"].str.count("[äÄ]"))
+    all_words["A"] += count
+    all_words["E"] += count
+    all_words["diff"] -= count
+
+    count = Series(all_words["word"].str.count("[öÖ]"))
+    all_words["O"] += count
+    all_words["E"] += count
+    all_words["diff"] -= count
+
+    count = Series(all_words["word"].str.count("[üÜ]"))
+    all_words["U"] += count
+    all_words["E"] += count
+    all_words["diff"] -= count
+
+    count = Series(all_words["word"].str.count("[ß]"))
+    all_words["S"] += 2 * count
+    all_words["diff"] -= count
+
+    count = Series(all_words["word"].str.count("[èéêÈÉÊ]"))
+    all_words["E"] += count
+
+    count = Series(all_words["word"].str.count("[âàáåÂÀÁÅ]"))
+    all_words["A"] += count
+
+    count = Series(all_words["word"].str.count("[ñÑ]"))
+    all_words["N"] += count
+
+    count = Series(all_words["word"].str.count("[íÍ]"))
+    all_words["I"] += count
+
+    count = Series(all_words["word"].str.count("[ôóÔÓ]"))
+    all_words["O"] += count
+
+    count = Series(all_words["word"].str.count("[çÇ]"))
+    all_words["C"] += count
+
+    count = Series(all_words["word"].str.count("[ûÛ]"))
+    all_words["U"] += count
+
+    return all_words
 
 
 def _get_all_words() -> Iterator[Tuple[str, str]]:
@@ -116,7 +142,7 @@ def _get_all_words() -> Iterator[Tuple[str, str]]:
                 line = line.strip()
                 if not line:
                     continue
-                yield language, line.upper()
+                yield language, line
 
 
 def _read_coin_values():
