@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Config(BaseSettings):
     value: int = Field(default=0, description="Value to create from given coins.")
     minimum_number_letters: int = Field(
-        default=3, description="Minimum numbers of letter a word needs to have."
+        default=5, description="Minimum numbers of letter a word needs to have."
     )
 
     model_config = SettingsConfigDict(cli_parse_args=True)
@@ -23,6 +23,10 @@ COIN_VALUE_REGEX = re.compile(r"([a-zA-Z])\s(.*)\s([0-9]+)")
 WALLET_LINE_REGEX = re.compile(r"([0-9]+)x([a-zA-Z ]+)([a-zA-Z])\s+\(([0-9]+)\)")
 LANGUAGE_FILES_BASE_PATH = Path("/usr/share/dict/")
 LANGUAGES = ["american-english", "british-english", "ngerman", "ogerman", "swiss"]
+
+_KEY_WORD = "word"
+_KEY_SANITIZED_WORD = "sanitized word"
+_KEY_VALUE = "value"
 
 
 def main():
@@ -44,9 +48,8 @@ def main():
     valid_words = _get_all_valid_words(
         config, coin_values["value"], letters_in_wallet, letter_index
     )
-    valid_words.sort_values("value", ascending=True, inplace=True)
     print(valid_words)
-    valid_words[["language", "value"]].to_csv(DATA_PATH / "output.csv")
+    valid_words.to_csv(DATA_PATH / "output.csv")
 
 
 def _get_all_valid_words(
@@ -55,87 +58,96 @@ def _get_all_valid_words(
     letters_in_wallet: Series,
     letter_index: Index,
 ) -> Iterator[Dict]:
-    all_words = DataFrame.from_records(_get_all_words(), columns=["language", "word"])
-    all_words.drop_duplicates("word", inplace=True)
+    all_words = _get_all_words(config)
+    coin_counts_per_word = _extract_all_letters(
+        all_words[_KEY_SANITIZED_WORD], letter_index
+    )
 
-    all_words = _extract_all_letters(all_words, letter_index)
-    all_words.set_index("word", inplace=True)
+    # filter for letters we need
+    coin_count_filter = coin_counts_per_word.le(letters_in_wallet).all(axis=1)
+    coin_counts_per_word = coin_counts_per_word[coin_count_filter]
+    # compute values
+    word_values = coin_counts_per_word.mul(coin_values, axis=1).sum(axis=1)
+    all_words = all_words[coin_count_filter]
+    all_words[_KEY_VALUE] = word_values
+    all_words.sort_values(_KEY_VALUE, ascending=True, inplace=True)
+    all_words.drop(columns=_KEY_SANITIZED_WORD, inplace=True)
+    return all_words
 
-    counts_dont_add_up = all_words.index.str.len() != all_words.drop(
-        columns="language"
-    ).sum(axis=1)
+
+def _extract_all_letters(all_sanitized_words: Series, letter_index: Index) -> DataFrame:
+    letters = DataFrame(index=all_sanitized_words.index, columns=letter_index)
+    diff = Series(0, index=all_sanitized_words.index)
+
+    for letter in letter_index:
+        regex = f"[{letter.lower()}{letter.upper()}]"
+        letters[letter] = Series(all_sanitized_words.str.count(regex))
+
+    count = Series(all_sanitized_words.str.count("[äÄ]"))
+    letters["A"] += count
+    letters["E"] += count
+    diff -= count
+
+    count = Series(all_sanitized_words.str.count("[öÖ]"))
+    letters["O"] += count
+    letters["E"] += count
+    diff -= count
+
+    count = Series(all_sanitized_words.str.count("[üÜ]"))
+    letters["U"] += count
+    letters["E"] += count
+    diff -= count
+
+    count = Series(all_sanitized_words.str.count("[ß]"))
+    letters["S"] += 2 * count
+    diff -= count
+
+    count = Series(all_sanitized_words.str.count("[èéêÈÉÊ]"))
+    letters["E"] += count
+
+    count = Series(all_sanitized_words.str.count("[âàáåÂÀÁÅ]"))
+    letters["A"] += count
+
+    count = Series(all_sanitized_words.str.count("[ñÑ]"))
+    letters["N"] += count
+
+    count = Series(all_sanitized_words.str.count("[íÍ]"))
+    letters["I"] += count
+
+    count = Series(all_sanitized_words.str.count("[ôóÔÓ]"))
+    letters["O"] += count
+
+    count = Series(all_sanitized_words.str.count("[çÇ]"))
+    letters["C"] += count
+
+    count = Series(all_sanitized_words.str.count("[ûÛ]"))
+    letters["U"] += count
+
+    counts_dont_add_up = all_sanitized_words.str.len() != (letters.sum(axis=1) + diff)
     if counts_dont_add_up.any():
-        missmatched_words = all_words[counts_dont_add_up].index
+        missmatched_words = all_sanitized_words[counts_dont_add_up].index
         raise RuntimeError(
             f"Not all counts add up, you may need to handle more special characters!: {missmatched_words}"
         )
 
-    # filter for number of letters
-    all_words = all_words[all_words.index.str.len() >= config.minimum_number_letters]
-    # filter for letters we need
-    all_words = all_words[
-        all_words.drop(columns=["language", "diff"]).le(letters_in_wallet).all(axis=1)
-    ]
-    # compute values
-    all_words["value"] = (
-        all_words.drop(columns="language").mul(coin_values, axis=1).sum(axis=1)
+    return letters
+
+
+def _get_all_words(config: Config) -> DataFrame:
+    all_words = DataFrame.from_records(
+        _iterate_all_language_files(), columns=["language", _KEY_WORD]
     )
-    all_words = all_words[all_words["value"] >= config.value]
-    all_words.sort_values("value", ascending=True, inplace=True)
+    all_words.drop_duplicates(_KEY_WORD, inplace=True)
+    all_words.set_index(_KEY_WORD, inplace=True)
+    all_words[_KEY_SANITIZED_WORD] = all_words.index.str.replace("'", "")
+    # filter for number of letters
+    all_words = all_words[
+        all_words[_KEY_SANITIZED_WORD].str.len() >= config.minimum_number_letters
+    ]
     return all_words
 
 
-def _extract_all_letters(all_words: DataFrame, letter_index: Index) -> DataFrame:
-    all_words["diff"] = Series(all_words["word"].str.count("[']"))
-
-    for letter in letter_index:
-        regex = f"[{letter.lower()}{letter.upper()}]"
-        all_words[letter] = Series(all_words["word"].str.count(regex))
-
-    count = Series(all_words["word"].str.count("[äÄ]"))
-    all_words["A"] += count
-    all_words["E"] += count
-    all_words["diff"] -= count
-
-    count = Series(all_words["word"].str.count("[öÖ]"))
-    all_words["O"] += count
-    all_words["E"] += count
-    all_words["diff"] -= count
-
-    count = Series(all_words["word"].str.count("[üÜ]"))
-    all_words["U"] += count
-    all_words["E"] += count
-    all_words["diff"] -= count
-
-    count = Series(all_words["word"].str.count("[ß]"))
-    all_words["S"] += 2 * count
-    all_words["diff"] -= count
-
-    count = Series(all_words["word"].str.count("[èéêÈÉÊ]"))
-    all_words["E"] += count
-
-    count = Series(all_words["word"].str.count("[âàáåÂÀÁÅ]"))
-    all_words["A"] += count
-
-    count = Series(all_words["word"].str.count("[ñÑ]"))
-    all_words["N"] += count
-
-    count = Series(all_words["word"].str.count("[íÍ]"))
-    all_words["I"] += count
-
-    count = Series(all_words["word"].str.count("[ôóÔÓ]"))
-    all_words["O"] += count
-
-    count = Series(all_words["word"].str.count("[çÇ]"))
-    all_words["C"] += count
-
-    count = Series(all_words["word"].str.count("[ûÛ]"))
-    all_words["U"] += count
-
-    return all_words
-
-
-def _get_all_words() -> Iterator[Tuple[str, str]]:
+def _iterate_all_language_files() -> Iterator[Tuple[str, str]]:
     for language in LANGUAGES:
         with open(LANGUAGE_FILES_BASE_PATH / language, "rt") as file:
             for line in file:
