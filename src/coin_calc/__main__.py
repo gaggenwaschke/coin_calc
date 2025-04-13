@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Dict, Iterator, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 from pandas import DataFrame, Index, Series, UInt64Dtype
 from pydantic import Field
@@ -8,8 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Config(BaseSettings):
-    value: int = Field(default=300, description="Value to create from given coins.")
-    value_range: int = Field(default=5, description="Upper value threshold")
+    value: int = Field(default=0, description="Value to create from given coins.")
+    value_range: Optional[int] = Field(
+        default=None, description="Upper value threshold"
+    )
     minimum_number_letters: int = Field(
         default=5, description="Minimum numbers of letter a word needs to have."
     )
@@ -71,7 +73,13 @@ def _get_all_valid_words(
     # filter for letters we need
     coin_count_filter = coin_counts_per_word.le(letters_in_wallet).all(axis=1)
     minimum_value_filter = all_words[_KEY_VALUE] >= config.value
-    maximum_value_filter = all_words[_KEY_VALUE] <= (config.value + config.value_range)
+    if config.value_range:
+        maximum_value_filter = all_words[_KEY_VALUE] <= (
+            config.value + config.value_range
+        )
+    else:
+        maximum_value_filter = True
+
     filtered_words = all_words[
         coin_count_filter & minimum_value_filter & maximum_value_filter
     ]
