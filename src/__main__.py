@@ -8,7 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Config(BaseSettings):
-    value: int = Field(default=0, description="Value to create from given coins.")
+    value: int = Field(default=300, description="Value to create from given coins.")
+    value_range: int = Field(default=5, description="Upper value threshold")
     minimum_number_letters: int = Field(
         default=5, description="Minimum numbers of letter a word needs to have."
     )
@@ -62,17 +63,20 @@ def _get_all_valid_words(
     coin_counts_per_word = _extract_all_letters(
         all_words[_KEY_SANITIZED_WORD], letter_index
     )
+    all_words.drop(columns=_KEY_SANITIZED_WORD, inplace=True)
+    word_values = coin_counts_per_word.mul(coin_values, axis=1).sum(axis=1)
+    all_words[_KEY_VALUE] = word_values
 
     # filter for letters we need
     coin_count_filter = coin_counts_per_word.le(letters_in_wallet).all(axis=1)
-    coin_counts_per_word = coin_counts_per_word[coin_count_filter]
-    # compute values
-    word_values = coin_counts_per_word.mul(coin_values, axis=1).sum(axis=1)
-    all_words = all_words[coin_count_filter]
-    all_words[_KEY_VALUE] = word_values
-    all_words.sort_values(_KEY_VALUE, ascending=True, inplace=True)
-    all_words.drop(columns=_KEY_SANITIZED_WORD, inplace=True)
-    return all_words
+    minimum_value_filter = all_words[_KEY_VALUE] >= config.value
+    maximum_value_filter = all_words[_KEY_VALUE] <= (config.value + config.value_range)
+    filtered_words = all_words[
+        coin_count_filter & minimum_value_filter & maximum_value_filter
+    ]
+    # all_words = all_words[all_words[_KEY_VALUE] <= config.value + 10]
+    filtered_words = filtered_words.sort_values(_KEY_VALUE, ascending=True)
+    return filtered_words
 
 
 def _extract_all_letters(all_sanitized_words: Series, letter_index: Index) -> DataFrame:
