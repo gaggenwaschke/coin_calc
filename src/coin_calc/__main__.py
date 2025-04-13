@@ -23,6 +23,8 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(cli_parse_args=True)
 
 
+DATA_DIR = Path(__file__).parent / "data"
+
 COIN_VALUE_REGEX = re.compile(r"([a-zA-Z])\s(.*)\s([0-9]+)")
 WALLET_LINE_REGEX = re.compile(r"([0-9]+)x([a-zA-Z ]+)([a-zA-Z])\s+\(([0-9]+)\)")
 LANGUAGE_FILES_BASE_PATH = Path("/usr/share/dict/")
@@ -35,7 +37,7 @@ _KEY_VALUE = "value"
 
 def main():
     config = Config()
-    coin_values = DataFrame(_read_coin_values(config))
+    coin_values = DataFrame(_read_coin_values())
     coin_values.set_index("letter", inplace=True)
     letter_index = coin_values.index
     coins = DataFrame.from_dict(_read_coin_inventory(config, coin_values))
@@ -170,8 +172,8 @@ def _iterate_all_language_files() -> Iterator[Tuple[str, str]]:
                 yield language, line
 
 
-def _read_coin_values(config: Config):
-    with open(config.data_path / "values.txt", "rt", encoding="utf-8") as file:
+def _read_coin_values():
+    with open(DATA_DIR / "values.txt", "rt", encoding="utf-8") as file:
         for line in file:
             line = line.strip()
             if not line:
