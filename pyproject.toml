@@ -1,8 +1,12 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "coin-calc"
+name = "coin_calc"
 version = "0.1.0"
 description = "Calculates all possible words to put together from you funny little letter coins."
-authors = ["gaggenwaschke"]
+authors = [{name="gaggenwaschke"}]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,3 +14,9 @@ dependencies = [
     "pandas>=2.2.3",
     "pydantic-settings>=2.8.1",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coin_calc"]
+
+[project.scripts]
+coin-calc = "coin_calc.__main__:main"

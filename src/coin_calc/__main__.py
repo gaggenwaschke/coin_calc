@@ -13,13 +13,14 @@ class Config(BaseSettings):
     minimum_number_letters: int = Field(
         default=5, description="Minimum numbers of letter a word needs to have."
     )
+    data_path: Path = Field(
+        default=Path("./data"),
+        description="The path to read data from and write them to.",
+    )
 
     model_config = SettingsConfigDict(cli_parse_args=True)
 
 
-DATA_PATH = Path(__file__).parent.parent / "data"
-COIN_VALUE_PATH = DATA_PATH / "values.txt"
-WALLET_PATH = DATA_PATH / "coins.txt"
 COIN_VALUE_REGEX = re.compile(r"([a-zA-Z])\s(.*)\s([0-9]+)")
 WALLET_LINE_REGEX = re.compile(r"([0-9]+)x([a-zA-Z ]+)([a-zA-Z])\s+\(([0-9]+)\)")
 LANGUAGE_FILES_BASE_PATH = Path("/usr/share/dict/")
@@ -32,10 +33,10 @@ _KEY_VALUE = "value"
 
 def main():
     config = Config()
-    coin_values = DataFrame(_read_coin_values())
+    coin_values = DataFrame(_read_coin_values(config))
     coin_values.set_index("letter", inplace=True)
     letter_index = coin_values.index
-    coins = DataFrame.from_dict(_read_coin_inventory(coin_values))
+    coins = DataFrame.from_dict(_read_coin_inventory(config, coin_values))
     value_all_coins = coins.value.sum()
     if value_all_coins < config.value:
         raise RuntimeError(
@@ -50,7 +51,7 @@ def main():
         config, coin_values["value"], letters_in_wallet, letter_index
     )
     print(valid_words)
-    valid_words.to_csv(DATA_PATH / "output.csv")
+    valid_words.to_csv(config.data_path / "output.csv")
 
 
 def _get_all_valid_words(
@@ -161,8 +162,8 @@ def _iterate_all_language_files() -> Iterator[Tuple[str, str]]:
                 yield language, line
 
 
-def _read_coin_values():
-    with open(COIN_VALUE_PATH, "rt", encoding="utf-8") as file:
+def _read_coin_values(config: Config):
+    with open(config.data_path / "values.txt", "rt", encoding="utf-8") as file:
         for line in file:
             line = line.strip()
             if not line:
@@ -174,8 +175,8 @@ def _read_coin_values():
             yield dict(letter=letter, name=name, value=value)
 
 
-def _read_coin_inventory(coin_values: DataFrame):
-    with open(WALLET_PATH, "rt", encoding="utf-8") as file:
+def _read_coin_inventory(config: Config, coin_values: DataFrame):
+    with open(config.data_path / "coins.txt", "rt", encoding="utf-8") as file:
         for line in file:
             line = line.strip()
             if not line:
