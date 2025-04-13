@@ -12,3 +12,11 @@ exist, use this command:
 ```bash
 coin_calc --help
 ```
+
+To specify your wallet, create a "data/coins.txt". And use the following syntax:
+
+```txt
+1x Silber Sterling K (100)
+1x Silber Sterling F (100)
+2x Silber Sterling W (200)
+```
