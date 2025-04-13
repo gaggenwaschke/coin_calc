@@ -26,10 +26,11 @@ class Config(BaseSettings):
 DATA_DIR = Path(__file__).parent / "data"
 
 COIN_VALUE_REGEX = re.compile(r"([a-zA-Z])\s(.*)\s([0-9]+)")
-WALLET_LINE_REGEX = re.compile(r"([0-9]+)x([a-zA-Z ]+)([a-zA-Z])\s+\(([0-9]+)\)")
+WALLET_LINE_REGEX = re.compile(r"([0-9]+).*x.*([a-zA-Z])")
 LANGUAGE_FILES_BASE_PATH = Path("/usr/share/dict/")
 LANGUAGES = ["american-english", "british-english", "ngerman", "ogerman", "swiss"]
 
+_KEY_NAME = "name"
 _KEY_WORD = "word"
 _KEY_SANITIZED_WORD = "sanitized word"
 _KEY_VALUE = "value"
@@ -85,7 +86,6 @@ def _get_all_valid_words(
     filtered_words = all_words[
         coin_count_filter & minimum_value_filter & maximum_value_filter
     ]
-    # all_words = all_words[all_words[_KEY_VALUE] <= config.value + 10]
     filtered_words = filtered_words.sort_values(_KEY_VALUE, ascending=True)
     return filtered_words
 
@@ -193,14 +193,9 @@ def _read_coin_inventory(config: Config, coin_values: DataFrame):
                 continue
             values = WALLET_LINE_REGEX.findall(line)[0]
             count = int(values[0])
-            name = values[1].strip()
-            letter = values[2].strip().upper()
-            value = int(values[3]) / count
-            expected_value = coin_values.loc[letter].value
-            if value != expected_value:
-                raise RuntimeError(
-                    f"Your wallet contains values that do not match the coin value index!: Found {value}, but expected {expected_value}."
-                )
+            letter = values[1].strip().upper()
+            name = coin_values.loc[letter, _KEY_NAME]
+            value = coin_values.loc[letter, _KEY_VALUE]
             for _ in range(count):
                 yield dict(name=name, letter=letter, value=value)
 
