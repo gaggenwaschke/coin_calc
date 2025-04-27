@@ -26,7 +26,7 @@ class Config(BaseSettings):
 DATA_DIR = Path(__file__).parent / "data"
 
 COIN_VALUE_REGEX = re.compile(r"([a-zA-Z])\s(.*)\s([0-9]+)")
-WALLET_LINE_REGEX = re.compile(r"([0-9]+).*x.*([a-zA-Z])")
+WALLET_LINE_REGEX = re.compile(r"([0-9]+)\s*[xX]\s*([a-zA-Z])")
 LANGUAGE_FILES_BASE_PATH = Path("/usr/share/dict/")
 LANGUAGES = ["american-english", "british-english", "ngerman", "ogerman", "swiss"]
 
